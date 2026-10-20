@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Simulatore Budget BMB 2027</title>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f4f6f9; color: #333; padding: 20px; }
+        .container { max-width: 900px; margin: 0 auto; background: white; padding: 30px; border-radius: 10px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); }
+        h1 { color: #2c3e50; text-align: center; border-bottom: 2px solid #3498db; padding-bottom: 10px; }
+        .grid { display: flex; gap: 30px; margin-top: 20px; }
+        .panel { flex: 1; padding: 20px; background: #f8f9fa; border-radius: 8px; border: 1px solid #e9ecef; }
+        .result-panel { flex: 1; padding: 20px; background: #2c3e50; color: white; border-radius: 8px; }
+        label { font-weight: bold; display: block; margin-top: 15px; font-size: 14px; }
+        input[type="range"] { width: 100%; margin: 10px 0; }
+        .value-display { font-size: 18px; color: #3498db; font-weight: bold; }
+        .checkbox-group { margin-top: 10px; }
+        .checkbox-group label { font-weight: normal; display: inline; margin-left: 5px; cursor: pointer; }
+        .metric { margin-bottom: 15px; font-size: 16px; display: flex; justify-content: space-between; border-bottom: 1px solid #455a64; padding-bottom: 5px; }
+        .total { font-size: 24px; font-weight: bold; color: #2ecc71; margin-top: 20px; border-bottom: none; }
+        .delta { font-size: 20px; margin-top: 10px; padding: 10px; border-radius: 5px; text-align: center; }
+        .save { background: #d4edda; color: #155724; }
+        .loss { background: #f8d7da; color: #721c24; }
+        .alert { background: #e74c3c; color: white; padding: 12px; border-radius: 5px; font-size: 14px; margin-top: 15px; display: none; font-weight: bold; text-align: center; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>Simulatore Interattivo Scenari Budget 2027</h1>
+    <div style="text-align:center; font-size:14px; color:#666;">Baseline As-Is (FCS3): 214.000 €/anno | Costo Fisso: 3.300 € | L1: 14 € | L2: 20 €</div>
+    
+    <div class="grid">
+        <!-- Pannello Controlli -->
+        <div class="panel">
+            <h3>Parametri Dinamici</h3>
+            
+            <label>Volume Totale Ticket Mensili: <span id="val_vol" class="value-display">800</span></label>
+            <input type="range" id="inp_vol" min="400" max="1500" step="10" value="800" oninput="calculate()">
+
+            <label>Percentuale Ticket scalati in L2: <span id="val_l2_perc" class="value-display">10%</span></label>
+            <input type="range" id="inp_l2_perc" min="0" max="30" step="1" value="10" oninput="calculate()">
+            
+            <div id="alert_combined" class="alert">
+                ⛔ SOGLIA DEL 15% SUPERATA!<br>
+                1. I ticket eccedenti vengono pagati a 14€.<br>
+                2. SLA Bloccante fallito: Bonus azzerati.
+            </div>
+
+            <label>Ottenimento KPI Premianti (Attivi se L2 ≤ 15%):</label>
+            <div class="checkbox-group">
+                <input type="checkbox" id="kpi_fcr" checked onchange="calculate()"> <label for="kpi_fcr">FCR MBE HUB (Pesa 40%)</label><br>
+                <input type="checkbox" id="kpi_auto" checked onchange="calculate()"> <label for="kpi_auto">Tasso Automazione (Pesa 50%)</label><br>
+                <input type="checkbox" id="kpi_esc" checked onchange="calculate()"> <label for="kpi_esc">Filtro Escalation (Pesa 10%)</label>
+            </div>
+        </div>
+
+        <!-- Pannello Risultati -->
+        <div class="result-panel">
+            <h3>Spesa Mensile Stimata</h3>
+            
+            <div class="metric"><span>Quota Fissa:</span> <span>€ 3.300,00</span></div>
+            <div class="metric"><span>Ticket L1 Fatturati (<span id="out_l1_num"></span>):</span> <span id="out_l1_cost"></span></div>
+            <div class="metric"><span>Ticket L2 Fatturati (<span id="out_l2_num"></span>):</span> <span id="out_l2_cost"></span></div>
+            <div class="metric"><span>Bonus Erogato (<span id="out_bonus_perc"></span>%):</span> <span id="out_bonus_cost"></span></div>
+            
+            <div class="metric total"><span>TOTALE MESE:</span> <span id="out_month_total"></span></div>
+            
+            <h3 style="margin-top:40px;">Proiezione Annuale</h3>
+            <div class="metric total" style="color:white; border-bottom:1px solid #7f8c8d; padding-bottom:10px;"><span>TOTALE ANNUO:</span> <span id="out_year_total"></span></div>
+            
+            <div id="delta_box" class="delta">
+                Delta vs As-Is: <span id="out_delta"></span>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    const FIXED_FEE = 3300;
+    const PRICE_L1 = 14;
+    const PRICE_L2 = 20;
+    const BASELINE = 214000;
+    const BONUS_MAX_PERC = 0.19;
+
+    function formatEur(num) { return "€ " + num.toLocaleString('it-IT', {minimumFractionDigits: 2, maximumFractionDigits: 2}); }
+
+    function calculate() {
+        let totalTickets = parseInt(document.getElementById('inp_vol').value);
+        let l2PercInput = parseInt(document.getElementById('inp_l2_perc').value) / 100;
+        
+        document.getElementById('val_vol').innerText = totalTickets;
+        document.getElementById('val_l2_perc').innerText = (l2PercInput * 100).toFixed(0) + "%";
+
+        // Logica unificata L2: Cap di spesa e SLA bloccante al 15%
+        let l2Actual = totalTickets * l2PercInput;
+        let l2Billed = Math.min(l2Actual, totalTickets * 0.15); 
+        let l1Billed = totalTickets - l2Billed;
+
+        let costL1 = l1Billed * PRICE_L1;
+        let costL2 = l2Billed * PRICE_L2;
+        let varCost = costL1 + costL2;
+
+        let thresholdExceeded = (l2PercInput > 0.15);
+        document.getElementById('alert_combined').style.display = thresholdExceeded ? 'block' : 'none';
+
+        // Calcolo Bonus (azzerato se L2 > 15%)
+        let bonusPerc = 0;
+        if (!thresholdExceeded) {
+            if(document.getElementById('kpi_fcr').checked) bonusPerc += 0.40;
+            if(document.getElementById('kpi_auto').checked) bonusPerc += 0.50;
+            if(document.getElementById('kpi_esc').checked) bonusPerc += 0.10;
+        } else {
+            document.getElementById('kpi_fcr').checked = false;
+            document.getElementById('kpi_auto').checked = false;
+            document.getElementById('kpi_esc').checked = false;
+        }
+
+        let maxBonusEuro = varCost * BONUS_MAX_PERC;
+        let bonusAchieved = maxBonusEuro * bonusPerc;
+
+        let monthTotal = FIXED_FEE + varCost + bonusAchieved;
+        let yearTotal = monthTotal * 12;
+        let delta = BASELINE - yearTotal;
+
+        document.getElementById('out_l1_num').innerText = Math.round(l1Billed);
+        document.getElementById('out_l2_num').innerText = Math.round(l2Billed);
+        document.getElementById('out_l1_cost').innerText = formatEur(costL1);
+        document.getElementById('out_l2_cost').innerText = formatEur(costL2);
+        document.getElementById('out_bonus_perc').innerText = (bonusPerc * 100).toFixed(0);
+        document.getElementById('out_bonus_cost').innerText = formatEur(bonusAchieved);
+        document.getElementById('out_month_total').innerText = formatEur(monthTotal);
+        document.getElementById('out_year_total').innerText = formatEur(yearTotal);
+
+        let deltaBox = document.getElementById('delta_box');
+        if (delta >= 0) {
+            deltaBox.className = 'delta save';
+            document.getElementById('out_delta').innerText = "Risparmio di " + formatEur(delta);
+        } else {
+            deltaBox.className = 'delta loss';
+            document.getElementById('out_delta').innerText = "Aumento di " + formatEur(Math.abs(delta));
+        }
+    }
+
+    calculate();
+</script>
+</body>
+</html>
